@@ -11,7 +11,7 @@ import json
 
 def add_sydney_timezone(*, input_datetime):
     # Add timezone to input datetime in format required by Mambu
-    if input_datetime == "NaT":
+    if input_datetime in (None, "NaT", "None"):
         return None
     else:
         naive_datetime = isoparse(input_datetime)
@@ -42,8 +42,11 @@ def get_sql(path, file_name):
 def convert_df_to_json(df):
     json_data = {}
 
-    for z in df.index:
-        json_data[z] = df.iloc[z].dropna().to_dict()
+    # for z in df.index:
+    #     json_data[z] = df.iloc[z].dropna().to_dict()
+
+    for i, row in df.iterrows():
+        json_data[i] = row.dropna().to_dict()
 
     json_str = json.dumps(json_data, indent=4, sort_keys=True)
     return json_str

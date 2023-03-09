@@ -12,15 +12,16 @@ from mambu_migration.source.util.functions import flatten_json_to_df
 
 class Group:
     def __init__(self, loan_ids):
+        self.url = MambuConfig.base_url + "/groups/"
         self.loan_ids = loan_ids
         (self.group_master, self.group_json_parsed) = self.get_group_master()
-        self.mambu_groups = self.fetch_mambu_groups()
+        self.mambu_group_list = self.group_master["id"].drop_duplicates().tolist()
 
     def get_group_master(self):
         # Get Mambu and cleanup the code in format required by Mambu
         df_group_final = (
             Client(loan_ids=self.loan_ids)
-            .mambu_clients.assign(
+            .fetch_mambu_clients().assign(
                 groupRoleNameKey=lambda x: x.apply(
                     lambda y: MambuConfig().get_group_role_name_key(
                         y["application_role"]
@@ -59,21 +60,16 @@ class Group:
         return result_df
 
     def fetch_mambu_groups(self, details_level="Full", limit="1000"):
-        url = MambuConfig.base_url + "/groups/"
-
-        id_list = self.group_master["id"].tolist()
-
         df_group_fetched = MambuConfig().fetch_mambu_entity(
-            id_list=id_list, url=url, details_level=details_level, limit=limit
+            id_list=self.mambu_group_list,
+            url=self.url,
+            details_level=details_level,
+            limit=limit,
         )
 
         return df_group_fetched
 
     def delete_mambu_groups(self):
-        url = MambuConfig.base_url + "/groups/"
-
-        group_delete_list = self.group_master["id"].drop_duplicates().tolist()
-
         MambuConfig().delete_mambu_entity(
-            url=url, entity_name="Group ", ids_list=group_delete_list
+            id_list=self.mambu_group_list, url=self.url, entity_name="Group "
         )

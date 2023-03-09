@@ -1,8 +1,11 @@
 import pandas as pd
+from mambu_migration.source.util.functions import print_tabulate
 
 
 class LoanField:
-    default_config_list = {
+
+    # Below for loan account
+    default_loan_config_list = {
         "accountHolderType": "Group",
         "productTypeKey": "8a89876f84504b1901845aae7cdd6ef8",
         "interestRateSource": "FIXED_INTEREST_RATE",
@@ -24,7 +27,7 @@ class LoanField:
         "restrictNextDueWithdrawal": False,
     }
 
-    datetime_list = [
+    loan_datetime_list = [
         "approved_date",
         "next_repayment_due_date",
         "maturity_date",
@@ -104,5 +107,50 @@ class LoanField:
                 ],
             ],
             "json_array": [False, False, False, False, False, True, True],
+        }
+    )
+
+    # Below for loan approval
+    loan_approval = {"action": "APPROVE", "notes": ""}
+
+    undo_loan_approval = {"action": "Undo_Approve", "notes": ""}
+
+    # Below for loan disbursement
+    disbursement_fee_key = {
+        "Establishment Fee": "8a8987ca859beaf001859dfdb4e24dfe",
+        "Transaction Fees": "8a8987ca859beaf001859dfdb4e24dff",
+        "Brokerage Fee": "8a8987ca859beaf001859e078b374f37",
+    }
+
+    default_disbursement_config_list = {"transactionChannelId": "settlement"}
+
+    disbursement_datetime_list = [
+        "value_date",
+        "booking_date",
+        "first_repayment_date",
+    ]
+
+    disbursement_field_rename_list = {
+        "loanid": "id",
+        "value_date": "valueDate",
+        "booking_date": "bookingDate",
+        "first_repayment_date": "firstRepaymentDate",
+    }
+
+    disbursement_groupby_list = ["id", "bookingDate", "valueDate", "firstRepaymentDate"]
+
+    disbursement_fields = pd.DataFrame(
+        {
+            "field_set": ["fees", "transactionDetails"],
+            "field_id": [
+                [
+                    "predefinedFeeKey",
+                    "amount",
+                ],
+                [
+                    "transactionChannelId",
+                ],
+            ],
+            "json_array": [True, False],
         }
     )

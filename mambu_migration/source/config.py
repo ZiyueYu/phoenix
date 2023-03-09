@@ -6,6 +6,7 @@ from http.client import responses
 from mambu_migration.source.util.authentication import Authentication
 from mambu_migration.source.util.functions import flatten_json_to_df
 from mambu_migration.source.schema.group_fields import GroupField
+from mambu_migration.source.schema.loan_fields import LoanField
 
 
 class Config:
@@ -42,6 +43,10 @@ class MambuConfig:
     def get_group_role_name_key(role):
         return GroupField().group_role_key[str(role).lower()]
 
+    @staticmethod
+    def get_disbursement_fee_key(role):
+        return LoanField().disbursement_fee_key[str(role)]
+
     def get_funder_key(self):
         url = self.base_url + "/branches"
         headers = {"apikey": Authentication.get_api_key(), "ACCEPT": self.accept}
@@ -52,7 +57,6 @@ class MambuConfig:
         return df_funders
 
     @staticmethod
-    ## Todo: below method exclude the nested json only if all values are null, consider scenarios in custom fields if 1 or muliple is null
     def apply_json_index(
         df,
         groupby_list,
@@ -61,11 +65,6 @@ class MambuConfig:
         json_array=False,
         # True with square bracket (custom field type = grouped), False with none (standard)
     ):
-        # Below code will drop the row if field is null
-        # df_no_null = df.dropna(subset=nested_field_list, how="all")
-        # if len(df_no_null) == 0:
-        #     return df[groupby_list]
-        # df_filled = df.fillna(value={field: "" for field in nested_field_list})
         if not json_array:
             df_grouped = (
                 df.groupby(groupby_list, group_keys=False)
@@ -75,7 +74,6 @@ class MambuConfig:
                     if all(v is None for v in x.values())
                     else {k: v for k, v in x.items() if v is not None}
                 )
-                # .apply(lambda x: {k: v for k, v in x.items() if v != None})
                 .reset_index(name=index_name)
             )
         else:
@@ -142,35 +140,47 @@ class MambuConfig:
             )
         return df_fetched
 
-    # def fetch_mambu_entity2(self, data, url, details_level, limit):
-    #     payload = {"detailsLevel": details_level, "limit": limit}
-    #
-    #     df_fetched = pd.DataFrame()
-    #     for key in data.index:
-    #         response = requests.get(
-    #             url + data.loc[key, "id"],
-    #             headers=MambuConfig.json_headers,
-    #             params=payload,
-    #             )
-    #
-    #         df_stg = pd.merge(
-    #             pd.DataFrame(data.loc[key])
-    #             .transpose()
-    #             .reset_index(drop=True),
-    #             flatten_json_to_df(response.json()),
-    #             left_index=True,
-    #             right_index=True,
-    #             )
-    #
-    #         df_fetched = pd.concat(
-    #             [df_fetched, df_stg], ignore_index=True
-    #         )
-    #     return df_fetched
-
-    def delete_mambu_entity(self, url, entity_name, ids_list):
-        for value in ids_list:
+    def delete_mambu_entity(self, id_list, url, entity_name):
+        for value in id_list:
             response = requests.delete(url + str(value), headers=self.json_headers)
             if response.status_code == 204:
                 print(entity_name + str(value) + " is deleted")
             else:
-                print(responses[response.status_code])
+                print(str(value) + responses[response.status_code])
+
+    def change_loan_state(self, id_list, url, action_name, action):
+        for loan_id in id_list:
+            response = requests.post(
+                url=url + str(loan_id) + ":changeState",
+                headers=self.json_headers,
+                json=action,
+            )
+            if response.status_code == 200:
+                print(str(loan_id) + " is " + action_name)
+            else:
+                print(str(loan_id) + responses[response.status_code])
+
+    def disburse_mambu_loan(self, parsed_json, url):
+        response_data = []
+        status_code = []
+        status = []
+
+        for key, obj in parsed_json.items():
+            response = requests.post(
+                url + obj["id"] + "/disbursement-transactions",
+                headers=self.json_headers,
+                json=obj,
+            )
+            status.append(responses[response.status_code])
+            status_code.append(response.status_code)
+            response_data.append(flatten(response.json()))
+        df = pd.concat(
+            [
+                pd.DataFrame(status, columns=["status"]),
+                pd.DataFrame(status_code, columns=["status code"]),
+                pd.DataFrame(response_data),
+            ],
+            axis=1,
+        )
+
+        return df

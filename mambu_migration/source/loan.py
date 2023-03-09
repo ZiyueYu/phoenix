@@ -23,14 +23,17 @@ from mambu_migration.source.schema.loan_fields import LoanField
 class LoanAccount:
     loan_accounts_arm = get_sql(root_dir, "loan_accounts_arm")
     loan_accounts_lap = get_sql(root_dir, "loan_accounts_lap")
+    loan_disbursement_arm = get_sql(root_dir, "loan_disbursement_details")
 
     def __init__(self, loan_ids, test_group):
+        self.url = MambuConfig.base_url + "/loans/"
         self.loan_ids = loan_ids
         self.loan_ids_str = ",".join(map(str, loan_ids))
         self.filter = (
             f"{MambuConfig.filter_prefix}{self.loan_ids_str}{MambuConfig.filter_suffix}"
         )
         self.test_group = test_group
+        # Below related to loan account
         (
             self.loan_stg,
             self.loan_master,
@@ -38,7 +41,15 @@ class LoanAccount:
             self.loan_json,
             self.loan_json_parsed,
         ) = self.get_loan_account_data()
-        # self.mambu_clients = self.fetch_mambu_clients()
+        self.mambu_loan_list = self.loan_master["id"].tolist()
+        # below related to loan account disbursement
+        (
+            self.disbursement_stg,
+            self.disbursement_master,
+            self.disbursement_merged,
+            self.disbursement_json,
+            self.disbursement_json_parsed,
+        ) = self.get_loan_disbursement_data()
 
     def get_loan_account_data(self):
         # Get loan details from LAP
@@ -77,11 +88,11 @@ class LoanAccount:
         )
 
         # Add default product config parameter
-        for key, value in LoanField().default_config_list.items():
+        for key, value in LoanField().default_loan_config_list.items():
             df_loan_stg[key] = value
 
         # Update datetime column to have timezone information
-        for datetime in df_loan_stg[LoanField().datetime_list]:
+        for datetime in df_loan_stg[LoanField().loan_datetime_list]:
             df_loan_stg[datetime] = (
                 df_loan_stg[datetime]
                 .astype(str)
@@ -124,47 +135,110 @@ class LoanAccount:
         )
 
     def create_mambu_loans(self):
-        url = MambuConfig.base_url + "/loans"
-
-        print("Creating Loans...")
-
         # Append status and created client to result_df
         result_df = MambuConfig().create_mambu_entity(
-            parsed_json=self.loan_json_parsed, url=url
+            parsed_json=self.loan_json_parsed, url=self.url
         )
-
-        print("Loan Creation Completed!")
 
         return result_df
 
     def fetch_mambu_loans(self, details_level="Full", limit="1000"):
-        url = MambuConfig.base_url + "/loans/"
-
-        id_list = self.loan_master["id"].tolist()
-
         df_loan_fetched = MambuConfig().fetch_mambu_entity(
-            id_list=id_list, url=url, details_level=details_level, limit=limit
+            id_list=self.mambu_loan_list,
+            url=self.url,
+            details_level=details_level,
+            limit=limit,
         )
 
         return df_loan_fetched
 
     def delete_mambu_loans(self):
-        url = MambuConfig.base_url + "/loans/"
-
-        loan_delete_list = self.loan_master["id"].tolist()
-
         # API call to delete mambu clients
         MambuConfig().delete_mambu_entity(
-            url=url, entity_name="Loan ", ids_list=loan_delete_list
+            id_list=self.mambu_loan_list,
+            url=self.url,
+            entity_name="Loan ",
         )
 
-    # def approve_mambu_loans(self):
-    #     loan_account_approval_obj = {
-    #         "action": "APPROVE",
-    #         "notes": ""
-    #     }
-    #
-    #     for n in self.loan_merged.index:
-    #         approve_loan_account = requests.post(base_url + str(df_loan_list['loan_id'][n]) +':changeState',
-    #                                              headers=headers, json=loan_account_approval_obj)
-    #         print(responses[approve_loan_account.status_code])
+    def approve_mambu_loans(self):
+        MambuConfig().change_loan_state(
+            id_list=self.mambu_loan_list,
+            url=self.url,
+            action=LoanField.loan_approval,
+            action_name="approved",
+        )
+
+    def undo_mambu_loan_approvals(self):
+        MambuConfig().change_loan_state(
+            id_list=self.mambu_loan_list,
+            url=self.url,
+            action=LoanField.undo_loan_approval,
+            action_name="undo approved",
+        )
+
+    def get_loan_disbursement_data(self):
+        df_disburse_arm = MambuConfig.get_wisr_data(
+            connection=ArmConnection.get_arm_connection(),
+            sql_filter=self.filter,
+            sql_query=self.loan_disbursement_arm,
+        )
+
+        df_disburse_stg = df_disburse_arm.assign(
+            predefinedFeeKey=lambda x: x.apply(
+                lambda y: MambuConfig().get_disbursement_fee_key(y["fee_type"]),
+                axis=1,
+            )
+        )
+
+        for key, value in LoanField().default_disbursement_config_list.items():
+            df_disburse_stg[key] = value
+
+        for datetime in df_disburse_stg[LoanField().disbursement_datetime_list]:
+            df_disburse_stg[datetime] = (
+                df_disburse_stg[datetime]
+                .astype(str)
+                .apply(lambda x: add_sydney_timezone(input_datetime=x))
+            )
+
+        df_disburse_final = df_disburse_stg.rename(
+            LoanField().disbursement_field_rename_list,
+            axis=1,
+        ).drop("fee_type", axis=1)
+
+        df_disburse_merged = df_disburse_final[
+            LoanField.disbursement_groupby_list
+        ].copy()
+
+        for z in LoanField.disbursement_fields.index:
+            df = MambuConfig.apply_json_index(
+                df=df_disburse_final,
+                groupby_list=LoanField().disbursement_groupby_list,
+                nested_field_list=LoanField.disbursement_fields.iloc[z]["field_id"],
+                index_name=LoanField.disbursement_fields.iloc[z]["field_set"],
+                json_array=LoanField.disbursement_fields.iloc[z]["json_array"],
+            )
+            df_disburse_merged = df_disburse_merged.merge(
+                df, how="inner", on=LoanField.disbursement_groupby_list
+            )
+        df_disburse_merged = df_disburse_merged.drop_duplicates(
+            subset=LoanField().disbursement_groupby_list, ignore_index=True
+        )
+
+        df_disburse_json = convert_df_to_json(df_disburse_merged)
+        df_disburse_json_parsed = json.loads(df_disburse_json)
+
+        return (
+            df_disburse_stg,
+            df_disburse_final,
+            df_disburse_merged,
+            df_disburse_json,
+            df_disburse_json_parsed
+        )
+
+    def disburse_mambu_loan(self):
+        # Append status and created client to result_df
+        result_df = MambuConfig().disburse_mambu_loan(
+            parsed_json=self.disbursement_json_parsed, url=self.url
+        )
+
+        return result_df

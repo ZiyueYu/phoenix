@@ -23,6 +23,7 @@ class Client:
     client_details_lap = get_sql(root_dir, "client_details_lap")
 
     def __init__(self, loan_ids):
+        self.url = MambuConfig.base_url + "/clients/"
         self.loan_ids_str = ",".join(map(str, loan_ids))
         self.filter = (
             f"{MambuConfig.filter_prefix}{self.loan_ids_str}{MambuConfig.filter_suffix}"
@@ -34,7 +35,7 @@ class Client:
             self.client_json,
             self.client_json_parsed,
         ) = self.get_client_data()
-        self.mambu_clients = self.fetch_mambu_clients()
+        self.mambu_client_list = self.client_master["id"].tolist()
 
     def get_client_data(self):
         # Get client data from sources
@@ -89,24 +90,21 @@ class Client:
         )
 
     def create_mambu_clients(self):
-        url = MambuConfig.base_url + "/clients"
-
         # Append status and created client to result_df
         result_df = MambuConfig().create_mambu_entity(
-            parsed_json=self.client_json_parsed, url=url
+            parsed_json=self.client_json_parsed, url=self.url
         )
 
         return result_df
 
     def fetch_mambu_clients(self, details_level="Full", limit="1000"):
-        url = MambuConfig.base_url + "/clients/"
-
-        id_list = self.client_master["id"].tolist()
-
         df_cust_additional = self.client_stg[["id", "loanid", "application_role"]]
 
         df_cust_fetched_stg = MambuConfig().fetch_mambu_entity(
-            id_list=id_list, url=url, details_level=details_level, limit=limit
+            id_list=self.mambu_client_list,
+            url=self.url,
+            details_level=details_level,
+            limit=limit,
         )
 
         df_cust_fetched = df_cust_additional.merge(
@@ -116,10 +114,8 @@ class Client:
         return df_cust_fetched
 
     def delete_mambu_clients(self):
-        url = MambuConfig.base_url + "/clients/"
-
-        cust_delete_list = self.client_master["id"].tolist()
-
         MambuConfig().delete_mambu_entity(
-            url=url, entity_name="Client ", ids_list=cust_delete_list
+            id_list=self.mambu_client_list,
+            url=self.url,
+            entity_name="Client ",
         )
